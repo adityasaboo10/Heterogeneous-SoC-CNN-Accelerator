@@ -1,5 +1,5 @@
-//In the start all 4 LBs fill one by one
-//After that each row fills with new set of pixels
+//In the start all 2 LBs fill one by one
+//After that each pixels goes to te,p buffer and moves internally
 /*
  STALL LOGIC (buf1..buf4 in AXIController):
  LB full but math not done -> row_full<=1 -> WREADY drops -> write_en
@@ -17,18 +17,20 @@
                           input all_strides_done,
                           input master_start,
 //                          input [7:0] pointer1, pointer2, pointer3, pointer4, //comes from LB
-                          input ptr_max1, ptr_max2, ptr_max3, ptr_max4,
-                          output reg rd_start, 
-                          output WREADY1, WREADY2, WREADY3, WREADY4,
-                          output [(NUM_ENGINES * 2)-1:0] lb_state_tree,
-                          output wire write_en1, write_en2, write_en3, write_en4
+                          input ptr_max1, ptr_max2, tempfull,
+                          input retired_pixel_valid,
+                          output rd_start, 
+                          output WREADY1, WREADY2, TEMPREADY,
+                          output [NUM_ENGINES-1:0] lb_state_tree, //inidicates which oldest row
+                          output wire write_en1, write_en2, temp_write_en,
+                          output recycle_en1, recycle_en2
                           );
                           
-                          
-    // Internally, replace the single lb_state register with:
-    (* max_fanout = 4 *) (* equivalent_register_removal = "no" *)
-    reg [1:0] lb_state_replicated [0:NUM_ENGINES-1];
-    //---------------
+// Internally, replace the single lb_state register with:
+(* max_fanout = 4 *) (* equivalent_register_removal = "no" *)
+    reg lb_state_replicated [0:NUM_ENGINES-1]; 
+    reg waiting_for_temp;  //0 means computation started, 1 means buf doesnt have its first 3 pixel window
+//---------------
     // Disable FSM extraction so Vivado obeys the fanout limit, 
     // forcing it to replicate these control states locally.
     
@@ -38,38 +40,34 @@
     reg start_State;
     localparam START = 1'b0;
     localparam BTW = 1'b1;
-    //----------------------
-    
-    (* fsm_extraction = "none" *)
-    (* max_fanout = 4 *) 
-    (* equivalent_register_removal = "no" *)
-    reg [1:0] pointer_state ;
-    localparam P1 = 2'd0;
-    localparam P2 = 2'd1;
-    localparam P3 = 2'd2;
-    localparam P4 = 2'd3;
+
     //-----BTW state param----
-    localparam buf1 = 2'd0;
-    localparam buf2 = 2'd1;
-    localparam buf3 = 2'd2;
-    localparam buf4 = 2'd3;
-    //----------------------
-    (* max_fanout = 4 *) (* equivalent_register_removal = "no" *) reg [1:0] current_row;
+    localparam buf1 = 1'd0;
+    localparam buf2 = 1'd1;
+    
+    (* max_fanout = 4 *) (* equivalent_register_removal = "no" *) reg current_row;
+    
+    localparam R1 = 1'd0;
+    localparam R2 = 1'd1;
     (* max_fanout = 4 *) (* equivalent_register_removal = "no" *)
     reg check;   //accounts for TLAST signal (at the last data pixel check is set to 0 to stop input
     (* max_fanout = 4 *) (* equivalent_register_removal = "no" *) reg row_full;
     reg math_done;
+    
     //---------------------
     // write_en fires when stream is valid and that LB is ready
     assign write_en1 = s_axis_tvalid && WREADY1 && check;  //handshake
     assign write_en2 = s_axis_tvalid && WREADY2 && check;
-    assign write_en3 = s_axis_tvalid && WREADY3 && check;
-    assign write_en4 = s_axis_tvalid && WREADY4 && check;
+    assign temp_write_en = s_axis_tvalid && TEMPREADY && check;
     
-    assign WREADY1 = (current_row == 0 && master_start && rst && !row_full) ? 1 : 0 ;
-    assign WREADY2 = (current_row == 1 && master_start && rst && !row_full) ? 1 : 0 ;
-    assign WREADY3 = (current_row == 2 && master_start && rst && !row_full) ? 1 : 0 ;
-    assign WREADY4 = (current_row == 3 && master_start && rst && !row_full) ? 1 : 0 ;
+    assign WREADY1 = (start_State == START && current_row == R1 && master_start && rst && !row_full && check) ? 1 : 0 ;
+    assign WREADY2 = (start_State == START && current_row == R2 && master_start && rst && !row_full && check) ? 1 : 0 ;
+    assign TEMPREADY = ((start_State == BTW) && master_start && rst && !row_full && check) ? 1 : 0 ;
+    
+    assign rd_start = (start_State == BTW) && waiting_for_temp && tempfull && temp_write_en;
+    
+    assign recycle_en1 = (start_State == BTW) && !row_full && (lb_state_replicated[0] == buf1) && retired_pixel_valid;
+    assign recycle_en2 = (start_State == BTW) && !row_full && (lb_state_replicated[0] == buf2) && retired_pixel_valid;
     
     integer i;
     
@@ -78,179 +76,120 @@
                          
     always @(posedge clk_50M or negedge rst) begin
         if(!rst || !master_start) begin
-            rd_start    <= 1'b0;
+            waiting_for_temp <= 1'b0;
             for (i = 0; i < NUM_ENGINES; i = i + 1) begin
-                lb_state_replicated[i] <= buf4;
+                lb_state_replicated[i] <= buf1;
             end 
             start_State <= START;
-            current_row <= 2'd0;
+            current_row <= R1;
             check       <= 1'b0;
-            pointer_state <= P1;
+//            pointer_state <= P1;
             row_full    <= 1'b0;
             math_done   <= 1'b0;
         end 
         else begin
-            if(all_strides_done) math_done <= 1'b1;  //math_done acts as a latch
-            else if(rd_start) math_done <= 1'b0;
-
+            if(rd_start) math_done <= 1'b0;
+            else if(all_strides_done) math_done <= 1'b1;  //math_done acts as a latch
+            
             case(start_State) 
                 START : begin
                     check <= 1'b1;
-                    rd_start <= 1'b0;
                     if(s_axis_tvalid) begin
-                        case(pointer_state) 
-                            P1 : begin
-                                if(ptr_max1 && WREADY1) begin
-                                    current_row <= 2'd1;
-                                    pointer_state <= P2;
-                                end
-                                else begin
-                                    current_row <= 2'd0;
-                                    pointer_state <= P1;
-                                end
+                        case(current_row)
+                        R1 : begin
+                            if(ptr_max1 && WREADY1) begin
+                                    current_row <= R2;
                             end
-                            P2 : begin
-                             if(ptr_max2 && WREADY2) begin
-                                    current_row <= 2'd2;
-                                    pointer_state <= P3;
-                                end
-                                else begin
-                                    current_row <= 2'd1;
-                                    pointer_state <= P2;
-                                end
+                            else begin
+                                current_row <= R1;
                             end
-                            P3 : begin
-                             if(ptr_max3 && WREADY3) begin
-                                    current_row <= 2'd3;
-                                    pointer_state <= P4;
-                                    rd_start <= 1'b1;   //start computation as we have valid data
-                                end
-                                else begin
-                                    current_row <= 2'd2;
-                                    pointer_state <= P3;
-                                end
-                            end 
-                            P4 : begin
-                                if(ptr_max4 && WREADY4) begin
+                        end
+                        R2 : begin
+                            if(ptr_max2 && WREADY2) begin
                                     start_State <= BTW;
-                                   for (i = 0; i < NUM_ENGINES; i = i + 1) begin
+                                    waiting_for_temp <= 1'b1;
+                                    for (i = 0; i < NUM_ENGINES; i = i + 1) begin
                                         lb_state_replicated[i] <= buf1;
-                                   end
-                                    current_row <= 2'd0;
-                                    rd_start <= 1'b1;  //after 4th row is filled we again have valid data
-                                end
-                                else begin
-                                    current_row <= 2'd3;
-                                    pointer_state <= P4;
-                                end
+                                    end
                             end
+                            else begin
+                                current_row <= R2;
+                            end
+                        end 
                         endcase
                     end
                 end
+                //------------------------ 
                 BTW : begin
-                    rd_start <= 1'b0;
-                    if(s_axis_tvalid && s_axis_tlast && (WREADY1 || WREADY2 || WREADY3 || WREADY4)) check <= 1'b0;
-                    
-                    case(lb_state_replicated[0])
-//--------------------------------------
-                        buf1 : begin
-                            if(ptr_max1 && s_axis_tvalid && WREADY1) begin
-                                if(math_done || all_strides_done) begin  //after buffer is filled, if math is also done move on
-                                    current_row <= 2'd1;
+                     // all incoming AXI pixels go into tempbuf
+                     if (temp_write_en && s_axis_tlast) begin
+                        check <= 1'b0;
+                     end
+                    //----------------------
+                    // waiting for new 3 pixels in the buf
+                    if (waiting_for_temp) begin
+                        if (tempfull && temp_write_en) begin
+                            // First three pixels of this row now exist.
+                             waiting_for_temp <= 1'b0;
+                        end
+                    end
+                     // --------current row is now running ---------
+                     else begin
+                        case (lb_state_replicated[0])
+                            buf1 : begin  //row 1 is the oldest row
+                                // ---------------------------------------------
+                                // Final recycled pixel of this row is being written into LB1 now.
+                                if (ptr_max1 && recycle_en1) begin   //data recycling finished
+                                    if (math_done || all_strides_done) begin  //is math done too
+                                        row_full <= 1'b0;
+                                        for (i = 0; i < NUM_ENGINES; i = i + 1) begin
+                                            lb_state_replicated[i] <= buf2;  //row 2 has oldest pixel now
+                                        end
+                                        waiting_for_temp <= 1'b1;
+                                    end
+                                    else begin //if math not done set row_full and wait for math
+                                        row_full <= 1'b1;
+                                    end
+                                end 
+                                // Math has now finally finished.
+                                //-----------------------------
+                                else if(row_full && all_strides_done) begin
+                                    row_full <= 1'b0;
                                     for (i = 0; i < NUM_ENGINES; i = i + 1) begin
                                         lb_state_replicated[i] <= buf2;
                                     end
-                                    rd_start <= 1'b1;
+                                    waiting_for_temp <= 1'b1;
                                 end
-                                else begin  //math is slower than buf
-                                    row_full <= 1'b1;  //sets WREADY as low
-                                end
-                            end
-                            else if(row_full && all_strides_done) begin
-                            // We were paused, math just finished, resume!
-                                row_full <= 1'b0;
-                                current_row <= 2'd1;
-                                for (i = 0; i < NUM_ENGINES; i = i + 1) begin
-                                        lb_state_replicated[i] <= buf2;
-                                end
-                                rd_start <= 1'b1;
-                            end
-                        end    
-//--------------------------------------------
-                        buf2 : begin
-                            if(ptr_max2 && s_axis_tvalid && WREADY2) begin
-                                if(math_done || all_strides_done) begin  //after buffer is filled, if math is also done move on
-                                    current_row <= 2'd2;
-                                    for (i = 0; i < NUM_ENGINES; i = i + 1) begin
-                                        lb_state_replicated[i] <= buf3;
+                            end 
+                            buf2 : begin  //row 2 is the oldest row
+                                // ---------------------------------------------
+                                // Final recycled pixel of this row is being written into LB2 now.
+                                if (ptr_max2 && recycle_en2) begin   //data recycling finished
+                                    if (math_done || all_strides_done) begin  //is math done too
+                                        row_full <= 1'b0;
+                                        for (i = 0; i < NUM_ENGINES; i = i + 1) begin
+                                            lb_state_replicated[i] <= buf1;  //row 2 has oldest pixel now
+                                        end
+                                        waiting_for_temp <= 1'b1;
                                     end
-                                    rd_start <= 1'b1;
-                                end
-                                else begin  //math is slower than buf
-                                    row_full <= 1'b1;
-                                end
-                            end
-                            else if(row_full && all_strides_done) begin
-                            // We were paused, math just finished, resume!
-                                row_full <= 1'b0;
-                                current_row <= 2'd2;
-                                for (i = 0; i < NUM_ENGINES; i = i + 1) begin
-                                    lb_state_replicated[i] <= buf3;
-                                end
-                                rd_start <= 1'b1;
-                            end
-                        end
-//--------------------------------------------
-                        buf3 : begin
-                            if(ptr_max3 && s_axis_tvalid && WREADY3) begin
-                                if(math_done || all_strides_done) begin  //after buffer is filled, if math is also done move on
-                                    current_row <= 2'd3;
-                                    for (i = 0; i < NUM_ENGINES; i = i + 1) begin
-                                        lb_state_replicated[i] <= buf4;
+                                    else begin //if math not done set row_full and wait for math
+                                        row_full <= 1'b1;
                                     end
-                                    rd_start <= 1'b1;
-                                end
-                                else begin  //math is slower than buf
-                                    row_full <= 1'b1;
-                                end
-                            end
-                            else if(row_full && all_strides_done) begin
-                            // We were paused, math just finished, resume!
-                                row_full <= 1'b0;
-                                current_row <= 2'd3;
-                                for (i = 0; i < NUM_ENGINES; i = i + 1) begin
-                                    lb_state_replicated[i] <= buf4;
-                                end
-                                rd_start <= 1'b1;
-                            end
-                        end
-//--------------------------------------------
-                        buf4 : begin
-                            if(ptr_max4 && s_axis_tvalid && WREADY4) begin
-                                if(math_done || all_strides_done) begin  //after buffer is filled, if math is also done move on
-                                    current_row <= 2'd0;
+                                end 
+                                // Math has now finally finished.
+                                //-----------------------------
+                                else if(row_full && all_strides_done) begin
+                                    row_full <= 1'b0;
                                     for (i = 0; i < NUM_ENGINES; i = i + 1) begin
                                         lb_state_replicated[i] <= buf1;
                                     end
-                                    rd_start <= 1'b1;
+                                    waiting_for_temp <= 1'b1;
                                 end
-                                else begin  //math is slower than buf
-                                    row_full <= 1'b1;
-                                end
-                            end
-                            else if(row_full && all_strides_done) begin
-                            // We were paused, math just finished, resume!
-                                row_full <= 1'b0;
-                                current_row <= 2'd0;
-                                for (i = 0; i < NUM_ENGINES; i = i + 1) begin
-                                    lb_state_replicated[i] <= buf1;
-                                end
-                                rd_start <= 1'b1;
-                            end
-                        end                                                
-                    endcase
-                end
-            endcase
+                            end  
+                        endcase
+                     end   
+                end 
+            endcase 
         end
     end
-    endmodule
+endmodule
