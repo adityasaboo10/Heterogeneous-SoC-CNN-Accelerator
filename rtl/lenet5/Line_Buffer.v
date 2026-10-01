@@ -3,6 +3,7 @@ module Line_Buffer #(parameter PIXW = 8, LB_size = 256)
     input rst,
     input [PIXW-1:0] inp_pix,
     input write_en,
+    input  [8:0]             active_width,
     input [7:0] base_pos,     // caller still passes the "left" edge of the window
     output [(3*PIXW)-1:0] out_pix,
 //    output [7:0] pointer_out,
@@ -15,7 +16,7 @@ module Line_Buffer #(parameter PIXW = 8, LB_size = 256)
     
     assign ptr_max = ptr_max_reg;
     
-    (* ram_style = "block" *) reg [PIXW-1:0] LB [LB_size-1:0];
+    (* ram_style = "block" *) reg [PIXW-1:0] LB [LB_size-1:0];  //physical memory is the same
     reg [7:0] pointer;
 
     // Only ONE read address needed: the leading edge of the 3-wide window
@@ -30,12 +31,20 @@ module Line_Buffer #(parameter PIXW = 8, LB_size = 256)
             ptr_max_reg <= 1'b0;
         end
         else if (write_en)begin 
-            if(pointer == LB_size - 2) ptr_max_reg <= 1'b1;
-            else if(pointer == LB_size-1) ptr_max_reg <= 1'b0;
-            pointer <= (pointer == LB_size-1) ? 0 : pointer + 1;
+            if(pointer == active_width - 2) ptr_max_reg <= 1'b1; // see below
+            else if(pointer == active_width -1) ptr_max_reg <= 1'b0;
+            pointer <= (pointer == active_width -1) ? 0 : pointer + 1;
         end
     end
+    /*
+    ex : for 28 pixels ( 0 to 27)
+    pixel 26        pointer=26     ptr_max=0
+     clock edge
+                  ptr_max ? 1
+                  pointer ? 27
 
+pixel 27        pointer=27     ptr_max=1  ? FINAL PIXEL
+    */
     always @(posedge clk_50M) begin
         if (write_en) LB[pointer] <= inp_pix;   // single write port
         rd_data <= LB[read_addr];               // single read port, reads the "newest" pixel of the window
