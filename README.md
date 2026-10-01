@@ -28,13 +28,14 @@ The original 2D accelerator demonstrates low-latency FPGA image processing, BRAM
 ## Key Features
 
 - **Two Accelerator Generations:** The repository preserves the original configurable 2D image-processing accelerator and adds the current LeNet-5 CNN implementation in separate RTL, software, testbench, IP, and result directories.
-- **Six Parallel Vector Engines:** The LeNet-5 datapath uses six parallel 3×3 vector engines, providing 54 DSP-backed MAC operations across the six lanes. Compared with the single-engine BRAM design, this increases parallel MAC capacity by 6× while LUT usage decreases from 4,839 to 4,334 and BRAM usage increases only from 11 to 12.
+- **Six Parallel Vector Engines:** The LeNet-5 datapath uses 6 parallel 3×3 vector engines, providing 54 DSP-backed MAC operations across the six lanes.
+- **K−1 Line-Buffer Architecture:** For a 3×3 kernel, the updated window generator stores only the previous two rows while the current row arrives directly from the AXI4-Stream input. Compared with the earlier six-engine IP, this reduced BRAM use from 12 to 6 and LUT use from 4,334 to 3,890 while retaining all 54 DSP-backed MACs.
 - **Layer-Reconfigurable CNN Datapath:** The same accelerator supports Conv1 and Conv2 through runtime configuration. Conv1 processes six filters in parallel, while Conv2 accumulates six input channels for each output filter.
 - **AXI4-Stream DMA Pipeline:** Input feature maps are streamed from DDR through Xilinx AXI DMA into the accelerator, and the output feature maps are returned to DDR without CPU-managed pixel-by-pixel transfers.
 - **AXI4-Lite Runtime Control:** Weights, biases, operating mode, quantization shift, active image width, and expected output-beat count are configured at runtime without rebuilding the bitstream.
 - **Five-Stage Output Pipeline:** The LeNet-5 output stage supports channel accumulation, bias addition, ReLU, requantization, clamping, and bypass modes for different convolution layers and debugging flows.
 - **Variable-Width Processing:** The LeNet-5 design operates directly on the required 28×28 and 13×13 feature-map widths instead of padding every layer to 256×256.
-- **Hardware-Software Co-Design:** Conv1 and Conv2 run in programmable logic, while max-pooling, fully connected layers, image preprocessing, and prediction run on the ARM/Python side.
+- **Hardware-Software Co-Design:** Conv1 and Conv2 run in programmable logic, while max-pooling, fully connected layers, image preprocessing, and prediction run on the ARM Cortex A9 processor.
 - **Native Signed Arithmetic:** Both accelerator generations support signed convolution weights directly in hardware.
 - **Reusable DMA Buffers:** The optimized software paths preallocate physically contiguous PYNQ buffers and reuse them across inference calls.
 
@@ -44,11 +45,11 @@ The original 2D accelerator demonstrates low-latency FPGA image processing, BRAM
 
 The project divides execution between the ARM processing system and the FPGA programmable logic.
 
-**1. Software Orchestrator (ARM Cortex-A9 / Python)**  
+**1. Software Orchestrator (ARM Cortex-A9)**  
 Handles image acquisition, preprocessing, model parameter loading, AXI4-Lite configuration, DMA buffer management, pooling, fully connected layers, and output visualization.
 
 **2. Hardware Accelerator (Programmable Logic / Verilog)**  
-Handles line buffering, sliding-window generation, signed 3×3 convolution, multi-engine execution, channel accumulation, activation, requantization, and AXI4-Stream output control.
+Handles K−1 line buffering, sliding-window generation, signed 3×3 convolution, multi-engine execution, channel accumulation, activation, requantization, and AXI4-Stream output control.
 
 ### LeNet-5 Hardware Module Hierarchy
 
@@ -97,7 +98,7 @@ graph TD
 
 The FPGA is reconfigured through AXI4-Lite registers between Conv1 and Conv2. Conv1 uses the parallel-bypass ReLU/quantization mode, while Conv2 uses the six-channel accumulation mode. Conv2 executes one output filter per pass for all 16 output channels.
 
-### Four-Buffer Sliding-Window Strategy
+### Original Four-Buffer Sliding-Window Strategy
 
 Applying a 3×3 convolution requires simultaneous access to three consecutive image rows. The design uses four rotating line buffers so that three rows can be read for convolution while the fourth buffer receives the next input row. This allows row loading and computation to overlap.
 
@@ -109,6 +110,21 @@ graph LR
     LB3[Row N+2] --> WIN
     WIN --> VE[Vector Engine]
 ```
+
+### Updated K−1 Line-Buffer Strategy
+
+The LeNet-5 accelerator replaces the four-buffer rotation with a K−1 row-delay architecture. For K=3, only 2 complete previous rows are stored and hence only 2 full buffers are needed instead of 4. The incoming AXI4-Stream pixel supplies the current row, while short horizontal shift registers retain neighbouring columns to form the complete 3×3 window.
+
+```mermaid
+graph TD
+    IN[Current AXI4-Stream Pixel<br/>Row N] --> SHIFT[Horizontal Shift Registers]
+    R1[Row Delay 1<br/>Row N−1] --> SHIFT
+    R2[Row Delay 2<br/>Row N−2] --> SHIFT
+    SHIFT --> WIN[3×3 Window]
+    WIN --> VE[Vector Engines]
+```
+
+This removes the extra full-row buffer used by the earlier rotating implementation. In the synthesized six-engine IP, the change halves BRAM use from 12 to 6 while preserving the 54-DSP compute datapath.
 
 ---
 
@@ -171,6 +187,7 @@ Heterogeneous-SoC-CNN-Accelerator/
 | **V3.1 — Channel Accumulator** | Added a five-stage 6-to-1 pipeline supporting Conv2 channel accumulation, bias, ReLU, requantization, and bypass modes. |
 | **V3.2 — Variable-Width Operation** | Added runtime active-width and expected-beat configuration for native 28×28 and 13×13 processing. |
 | **V3.3 — End-to-End LeNet-5** | Added Python flows for hardware Conv1/Conv2, ARM pooling and fully connected layers, image classification, and live webcam inference. |
+| **V3.4 — K−1 Line Buffering** | Replaced the earlier four-buffer rotation with two stored rows plus the current input stream, reducing the six-engine IP from 12 to 6 BRAMs. |
 
 ---
 
@@ -182,6 +199,7 @@ Heterogeneous-SoC-CNN-Accelerator/
 | **Different Conv1 and Conv2 Dimensions** | Added runtime active-width configuration so the same datapath directly processes 28×28 and 13×13 inputs. |
 | **Conv1 and Conv2 Require Different Dataflows** | Added selectable accumulator modes: six parallel outputs for Conv1 and six-channel accumulation for Conv2. |
 | **Six-Channel Conv2 Accumulation** | Implemented a pipelined adder tree followed by bias, ReLU, right-shift requantization, and 8-bit clamping. |
+| **Redundant Full-Row Storage** | Replaced four rotating line buffers with a K−1 architecture that stores only two previous rows for a 3×3 kernel. |
 | **Vivado Dead-Code Elimination** | Increased state and address widths where required so valid control paths were not pruned during synthesis. |
 | **High LUT Utilization in the Original Design** | Replaced distributed line-buffer storage with dedicated BRAM resources. |
 | **Software Overhead in Repeated Inference** | Reused persistent DMA buffers and grouped contiguous AXI4-Lite parameters into block writes in the live inference flow. |
@@ -211,7 +229,17 @@ The repository includes the complete RTL and PYNQ software required to:
 - classify a supplied digit image; and
 - run live webcam digit inference.
 
-The accelerator-IP utilization report is included under `results/lenet5/`. Final LeNet-5 timing measurements, full-system utilization, screenshots, and benchmark tables will be added later.
+### LeNet-5 Convolution Timing
+
+Only convolution execution is compared below. FPGA timings include DMA transfer plus programmable-logic execution; pooling, fully connected layers, preprocessing, display and other full-network software overheads are intentionally excluded.
+
+| Convolution Stage | FPGA DMA + PL | ARM Software | Speedup |
+|-------------------|---------------|--------------|---------|
+| **Conv1** | **0.261 ms** | 12.953 ms | **49.658×** |
+| **Conv2 — all 16 output filters** | **4.627 ms** | 221.006 ms | **47.761×** |
+| **All convolution layers** | **4.888 ms** | 233.960 ms | **47.862×** |
+
+The FPGA Conv2 average is **0.289 ms per output filter**. These values measure convolution acceleration only and should not be interpreted as full-network latency or full-application speedup.
 
 ---
 
@@ -223,23 +251,21 @@ Migrating the original line buffers from distributed LUT-RAM to BRAM reduced LUT
 
 | Version | LUTs | BRAM | DSP Slices |
 |---------|------|------|------------|
-| V1.x / V2.0 — LUT-RAM | 12,360 | 5 | 9 |
-| V2.1+ — BRAM line buffers | **4,839** | 11 | 9 |
+| V1.x / V2.0 — LUT-RAM | 12360 | 5 | 9 |
+| V2.1+ — BRAM line buffers | **4839** | 11 | 9 |
 
-This corresponds to a **61% reduction in LUT utilization**, freeing logic resources for the later multi-engine CNN design.
+This corresponds to a **61% reduction in the reported LUT utilization**. However, these older figures appear to describe the complete Vivado design rather than only the accelerator IP. They are therefore retained as historical results but are **not compared directly** with the LeNet-5 IP-only figures below. A hierarchical or out-of-context utilization report for the original 2D accelerator IP is required for a like-for-like cross-generation comparison.
 
 ### LeNet-5 Accelerator
 
 The following figures are for the **accelerator IP only**; they exclude the Zynq processing system, AXI DMA, and system-level interconnect.
 
-| Accelerator IP | Vector Engines | LUTs | BRAM | URAM | DSP Slices |
-|----------------|----------------|------|------|------|------------|
-| Single-engine BRAM design | 1 | 4,839 | 11 | — | 9 |
-| Six-engine LeNet-5 design | 6 | **4,334** | **12** | **0** | **54** |
+| Six-Engine Accelerator IP | LUTs | FFs | BRAM | URAM | DSP Slices |
+|---------------------------|------|-----|------|------|------------|
+| Previous line-buffer implementation | 4334 | 5553 | 12 | 0 | 54 |
+| **K−1 line-buffer implementation** | **3890** | **5263** | **6** | **0** | **54** |
 
-The six-engine design increases parallel MAC capacity by **6×** (9 to 54 DSP-backed MACs), while LUT usage decreases by **505 LUTs (10.4%)** and BRAM usage increases by only **one block (9.1%)**. DSP usage scales directly with the added compute lanes, but the control, buffering, and surrounding logic do not scale at the same rate as the compute capacity.
-
-![LeNet-5 accelerator IP utilization](results/lenet5/lenet5_ip_utilization.png)
+With compute capacity unchanged at 54 DSP-backed MACs, the K−1 implementation reduces LUT use by **444 LUTs (10.2%)**, BRAM use by **6 blocks (50%)** and FFs use by **290 FFs**.
 
 ---
 
@@ -249,13 +275,12 @@ The six-engine design increases parallel MAC capacity by **6×** (9 to 54 DSP-ba
 - [x] Original software and testbenches moved into dedicated directories
 - [x] Packaged 3×3, 5×5, and 9×9 IP archives organized under `ip/2d_processing/`
 - [x] Six-engine LeNet-5 RTL added under `rtl/lenet5/`
+- [x] K−1 line-buffer window generator implemented
 - [x] Conv1 visualization and NumPy-reference checking script added
 - [x] End-to-end image-based LeNet-5 classification script added
 - [x] Live webcam digit-classification script added
-- [x] Six-engine accelerator-IP utilization report added
-- [ ] LeNet-5 IP archive and testbench documentation
-- [ ] Final LeNet-5 timing, full-system utilization, screenshots, and benchmark results
-
+- [x] K−1 six-engine accelerator-IP utilization report added
+- [x] Conv1, Conv2, and combined convolution timing comparison added
 ---
 
 ## Setup & Usage
