@@ -7,6 +7,7 @@ module conv_layer_top #(parameter PIXW=8, K_size=3, Lb_size=256, Output_Width=32
     input [(Output_Width*6)-1:0] bias_flat,
     input [Output_Width -1 : 0] bias,
     input  [1:0]  mode,  
+    input  [8:0]             active_width,
     input [4:0] shift_amount,   
     output signed [Output_Width-1:0] accum_out,  //output of mode 0, 1
     output [(NUM_ENGINES*PIXW)-1:0] quantized_pixel_out,
@@ -19,7 +20,7 @@ module conv_layer_top #(parameter PIXW=8, K_size=3, Lb_size=256, Output_Width=32
     wire [(K_size*K_size*PIXW)-1:0] ifMAP_flat1, ifMAP_flat2, ifMAP_flat3, ifMAP_flat4, ifMAP_flat5, ifMAP_flat6;
 
     top_w_axic_rdc #(.PIXW(PIXW), .K_size(K_size), .LB_size(Lb_size)) buf_stage (
-        .clk_50M(clk_50M), .rst(rst), .master_start(master_start),
+        .clk_50M(clk_50M), .rst(rst), .master_start(master_start), .active_width(active_width),
         .s_axis_tdata(s_axis_tdata), .s_axis_tvalid(s_axis_tvalid), .s_axis_tlast(s_axis_tlast),
         .s_axis_tready(s_axis_tready), .vec_valid_tree(vec_valid_tree),
         .ifMAP_flat1(ifMAP_flat1), .ifMAP_flat2(ifMAP_flat2), .ifMAP_flat3(ifMAP_flat3),
