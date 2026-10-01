@@ -28,7 +28,7 @@ The original 2D accelerator demonstrates low-latency FPGA image processing, BRAM
 ## Key Features
 
 - **Two Accelerator Generations:** The repository preserves the original configurable 2D image-processing accelerator and adds the current LeNet-5 CNN implementation in separate RTL, software, testbench, IP, and result directories.
-- **Six Parallel Vector Engines:** The LeNet-5 datapath uses six parallel 3×3 vector engines, providing 54 DSP-backed MAC operations across the six lanes.
+- **Six Parallel Vector Engines:** The LeNet-5 datapath uses six parallel 3×3 vector engines, providing 54 DSP-backed MAC operations across the six lanes. Compared with the single-engine BRAM design, this increases parallel MAC capacity by 6× while LUT usage decreases from 4,839 to 4,334 and BRAM usage increases only from 11 to 12.
 - **Layer-Reconfigurable CNN Datapath:** The same accelerator supports Conv1 and Conv2 through runtime configuration. Conv1 processes six filters in parallel, while Conv2 accumulates six input channels for each output filter.
 - **AXI4-Stream DMA Pipeline:** Input feature maps are streamed from DDR through Xilinx AXI DMA into the accelerator, and the output feature maps are returned to DDR without CPU-managed pixel-by-pixel transfers.
 - **AXI4-Lite Runtime Control:** Weights, biases, operating mode, quantization shift, active image width, and expected output-beat count are configured at runtime without rebuilding the bitstream.
@@ -211,7 +211,7 @@ The repository includes the complete RTL and PYNQ software required to:
 - classify a supplied digit image; and
 - run live webcam digit inference.
 
-Final LeNet-5 screenshots, timing measurements, resource reports, and benchmark tables will be added under `results/lenet5/`.
+The accelerator-IP utilization report is included under `results/lenet5/`. Final LeNet-5 timing measurements, full-system utilization, screenshots, and benchmark tables will be added later.
 
 ---
 
@@ -230,7 +230,16 @@ This corresponds to a **61% reduction in LUT utilization**, freeing logic resour
 
 ### LeNet-5 Accelerator
 
-The LeNet-5 RTL contains six 3×3 vector engines, corresponding to 54 parallel multiplier-accumulator datapaths. Final post-synthesis and post-implementation utilization numbers will be added with the LeNet-5 result set.
+The following figures are for the **accelerator IP only**; they exclude the Zynq processing system, AXI DMA, and system-level interconnect.
+
+| Accelerator IP | Vector Engines | LUTs | BRAM | URAM | DSP Slices |
+|----------------|----------------|------|------|------|------------|
+| Single-engine BRAM design | 1 | 4,839 | 11 | — | 9 |
+| Six-engine LeNet-5 design | 6 | **4,334** | **12** | **0** | **54** |
+
+The six-engine design increases parallel MAC capacity by **6×** (9 to 54 DSP-backed MACs), while LUT usage decreases by **505 LUTs (10.4%)** and BRAM usage increases by only **one block (9.1%)**. DSP usage scales directly with the added compute lanes, but the control, buffering, and surrounding logic do not scale at the same rate as the compute capacity.
+
+![LeNet-5 accelerator IP utilization](results/lenet5/lenet5_ip_utilization.png)
 
 ---
 
@@ -243,8 +252,9 @@ The LeNet-5 RTL contains six 3×3 vector engines, corresponding to 54 parallel m
 - [x] Conv1 visualization and NumPy-reference checking script added
 - [x] End-to-end image-based LeNet-5 classification script added
 - [x] Live webcam digit-classification script added
+- [x] Six-engine accelerator-IP utilization report added
 - [ ] LeNet-5 IP archive and testbench documentation
-- [ ] Final LeNet-5 timing, utilization, screenshots, and benchmark results
+- [ ] Final LeNet-5 timing, full-system utilization, screenshots, and benchmark results
 
 ---
 
@@ -280,4 +290,3 @@ The LeNet-5 RTL contains six 3×3 vector engines, corresponding to 54 parallel m
 2. Use the same LeNet-5 overlay and model parameter files described above.
 3. Run `software/lenet5/demo_live.py` in Jupyter.
 4. Draw or show a digit inside the capture region to view the predicted class and confidence.
-
