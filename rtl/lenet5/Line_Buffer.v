@@ -2,14 +2,21 @@ module Line_Buffer #(parameter PIXW = 8, LB_size = 256)
    (input clk_50M,
     input rst,
     input [PIXW-1:0] inp_pix,
+    input [PIXW-1:0] retired_pix,
     input write_en,
+    input recycle_en,
     input  [8:0]             active_width,
     input [7:0] base_pos,     // caller still passes the "left" edge of the window
     output [(3*PIXW)-1:0] out_pix,
 //    output [7:0] pointer_out,
     output ptr_max //flag to indicate if the ptr is at max position
     );
+    
+wire lb_write_enable;
+assign lb_write_enable = write_en | recycle_en;
 
+wire [PIXW-1:0] lb_input;
+assign lb_input = recycle_en ? retired_pix : inp_pix;
 //    assign pointer_out = pointer;
 (* max_fanout = 3 *) (* equivalent_register_removal = "no" *)
     reg ptr_max_reg;
@@ -30,7 +37,7 @@ module Line_Buffer #(parameter PIXW = 8, LB_size = 256)
             pointer <= 0;
             ptr_max_reg <= 1'b0;
         end
-        else if (write_en)begin 
+        else if (lb_write_enable)begin 
             if(pointer == active_width - 2) ptr_max_reg <= 1'b1; // see below
             else if(pointer == active_width -1) ptr_max_reg <= 1'b0;
             pointer <= (pointer == active_width -1) ? 0 : pointer + 1;
@@ -46,7 +53,7 @@ module Line_Buffer #(parameter PIXW = 8, LB_size = 256)
 pixel 27        pointer=27     ptr_max=1  ? FINAL PIXEL
     */
     always @(posedge clk_50M) begin
-        if (write_en) LB[pointer] <= inp_pix;   // single write port
+        if (lb_write_enable) LB[pointer] <= lb_input;   // single write port
         rd_data <= LB[read_addr];               // single read port, reads the "newest" pixel of the window
         tap1 <= rd_data;   // 1 cycle older -> becomes "middle" pixel
         tap2 <= tap1;      // 2 cycles older -> becomes "oldest/base" pixel
