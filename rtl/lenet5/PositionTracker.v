@@ -9,11 +9,15 @@ module PositionTracker #(
     input                    rst, 
     input                    rd_start, 
     input                    master_start, 
+    input  [8:0]             active_width,
     output reg [7:0]         base_pos, 
     output reg               all_strides_done, 
     output [NUM_ENGINES-1:0] vec_valid_tree
 );     
     
+    wire [8:0] last_stride;
+    assign last_stride = active_width - K_size;
+
     reg [7:0] rd_counter;
     reg       reading_active;
     
@@ -55,24 +59,21 @@ module PositionTracker #(
 
             all_strides_done <= 1'b0;
 
-            // 3. Reading active latch
-            if (rd_start)
-                reading_active <= 1'b1;
-            else if (all_strides_done)
-                reading_active <= 1'b0;
-
             // 4. Stride counter and base_pos generation
             if (reading_active) begin
-                if (rd_counter < (LB_size - K_size)) begin
+                if (rd_counter < last_stride) begin
                     base_pos   <= base_pos + 1'b1;
                     rd_counter <= rd_counter + 1'b1;
                 end
                 else begin
                     all_strides_done <= 1'b1;
+                    reading_active   <= 1'b0;
                     rd_counter       <= 8'd0;
                     base_pos         <= 8'd0;
                 end
             end
+            else if (rd_start)
+                reading_active <= 1'b1;
         end
     end
 
