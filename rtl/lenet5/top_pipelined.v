@@ -8,6 +8,7 @@ module top_pipelined#(parameter PIXW = 8,
     input write_en1, write_en2, write_en3, write_en4,
     input [1:0] lb_state,
     input [7:0] base_pos,
+    input  [8:0] active_width,
 //    input rd_start,
     input master_start,
     output ptr_max1, ptr_max2, ptr_max3, ptr_max4,
@@ -21,19 +22,19 @@ wire [(3*PIXW)-1:0] out_pix1, out_pix2, out_pix3, out_pix4;
 
 //----------------Line Buffers----------------------    
 Line_Buffer #(.PIXW(PIXW), .LB_size(LB_size)) LB1 (.clk_50M(clk_50M), .rst(rst), .inp_pix(s_axis_tdata), 
-                .write_en(write_en1), .base_pos(base_pos), .out_pix(out_pix1),
+                .write_en(write_en1),.active_width(active_width), .base_pos(base_pos), .out_pix(out_pix1),
                 .ptr_max(ptr_max1));
                 
 Line_Buffer #(.PIXW(PIXW), .LB_size(LB_size)) LB2 (.clk_50M(clk_50M), .rst(rst), .inp_pix(s_axis_tdata), 
-                .write_en(write_en2), .base_pos(base_pos), .out_pix(out_pix2),
+                .write_en(write_en2),.active_width(active_width), .base_pos(base_pos), .out_pix(out_pix2),
                 .ptr_max(ptr_max2));
                 
 Line_Buffer #(.PIXW(PIXW), .LB_size(LB_size)) LB3 (.clk_50M(clk_50M), .rst(rst), .inp_pix(s_axis_tdata), 
-                .write_en(write_en3), .base_pos(base_pos), .out_pix(out_pix3),
+                .write_en(write_en3),.active_width(active_width), .base_pos(base_pos), .out_pix(out_pix3),
                 .ptr_max(ptr_max3));               
                   
 Line_Buffer #(.PIXW(PIXW), .LB_size(LB_size)) LB4 (.clk_50M(clk_50M), .rst(rst), .inp_pix(s_axis_tdata), 
-                .write_en(write_en4), .base_pos(base_pos), .out_pix(out_pix4),
+                .write_en(write_en4),.active_width(active_width), .base_pos(base_pos), .out_pix(out_pix4),
                 .ptr_max(ptr_max4));  
                 
              
