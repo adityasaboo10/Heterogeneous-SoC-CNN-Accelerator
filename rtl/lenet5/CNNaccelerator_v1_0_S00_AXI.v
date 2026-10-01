@@ -641,6 +641,7 @@
     
     wire [1:0] mode   = slv_reg2[1:0];
     wire [4:0] shift_amount = slv_reg2[6:2];
+    wire [8:0] active_width = slv_reg2[15:7];
     wire [15:0] expected_beats = slv_reg2[31:16];
     
     wire signed [Output_Width-1:0] bias = slv_reg3;
@@ -676,6 +677,7 @@
         .bias_flat(bias_flat),
         .bias(bias),
         .mode(mode),
+        .active_width(active_width),
         .shift_amount(shift_amount),
         .accum_out(accum_out),
         .quantized_pixel_out(quantized_pixel_out),
